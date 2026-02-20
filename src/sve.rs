@@ -4,7 +4,10 @@ const LDIGITS: [u8; 16] = [
     b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'0', 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 ];
 
-#[inline(always)] // 核心优化 1：强制内联，消灭函数调用开销
+/// use `splice` to align lanes to the right
+/// there are two branches to handle <=8 and >8 digits
+/// where in cpp's version, it's handled in a big switch-case
+#[inline(always)]
 pub unsafe fn simd_str2int_sve2(c: &[u8], need: usize) -> (u64, usize) {
     let mut count: u64;
     let mut res: u64;
@@ -27,7 +30,7 @@ pub unsafe fn simd_str2int_sve2(c: &[u8], need: usize) -> (u64, usize) {
             "cmp {count}, #8",
             "b.hi 2f",
 
-            // <= 8 位逻辑
+            // <= 8
             "1:",
             "uunpklo z2.h, z0.b",
             "mov {shift}, #8",
@@ -45,15 +48,15 @@ pub unsafe fn simd_str2int_sve2(c: &[u8], need: usize) -> (u64, usize) {
             "fmov {res}, d6",
             "b 3f",
 
-            // > 8 位逻辑 (9-16位)
+            // 9-16
             "2:",
             "mov {shift}, #16",
             "sub {shift}, {shift}, {count}",
             "whilelo p3.b, xzr, {shift}",
             "splice z7.b, p3, z7.b, z0.b",
 
-        "ld1h {{z3.h}}, p2/z, [{w8_ptr}]",
-        "ld1d {{z5.d}}, p2/z, [{w2_ptr}]",
+            "ld1h {{z3.h}}, p2/z, [{w8_ptr}]",
+            "ld1d {{z5.d}}, p2/z, [{w2_ptr}]",
 
             "uunpklo z2.h, z7.b",
             "dup z4.d, #0",

@@ -25,37 +25,33 @@ const NUMBERS: &[&str] = &[
 ];
 
 fn bench_i64(c: &mut Criterion) {
-    let expected = NUMBERS
-        .iter()
-        .map(|s| s.parse::<u64>().unwrap())
-        .collect::<Vec<_>>();
+    for (i, s) in NUMBERS.iter().enumerate() {
+        let expected = s.parse::<u64>().unwrap();
+        let bench_name_neon = format!("sonic-number neon len={}", i + 1);
+        let bench_name_sve = format!("sonic-number sve len={}", i + 1);
+        let bench_name_atoi = format!("atoi_simd parse len={}", i + 1);
 
-    c.bench_function("sonic-number neon", |b| {
-        b.iter(|| {
-            for (s, expected) in NUMBERS.iter().zip(expected.iter()) {
+        c.bench_function(&bench_name_neon, |b| {
+            b.iter(|| {
                 let val = unsafe { simd_str2int_neon(black_box(s.as_bytes()), s.len()) };
-                assert_eq!(val.0, *expected);
-            }
-        })
-    });
+                assert_eq!(val.0, expected);
+            })
+        });
 
-    c.bench_function("sonic-number sve", |b| {
-        b.iter(|| {
-            for (s, expected) in NUMBERS.iter().zip(expected.iter()) {
+        c.bench_function(&bench_name_sve, |b| {
+            b.iter(|| {
                 let val = unsafe { simd_str2int_sve2(black_box(s.as_bytes()), s.len()) };
-                assert_eq!(val.0, *expected);
-            }
-        })
-    });
+                assert_eq!(val.0, expected);
+            })
+        });
 
-    c.bench_function("atoi_simd parse", |b| {
-        b.iter(|| {
-            for (s, expected) in NUMBERS.iter().zip(expected.iter()) {
+        c.bench_function(&bench_name_atoi, |b| {
+            b.iter(|| {
                 let val = atoi_simd_parse::<u64, false, false>(black_box(s.as_bytes())).unwrap();
-                assert_eq!(val, *expected);
-            }
-        })
-    });
+                assert_eq!(val, expected);
+            })
+        });
+    }
 }
 
 criterion_group!(benches, bench_i64);

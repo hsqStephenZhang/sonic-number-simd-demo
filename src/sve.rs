@@ -17,6 +17,12 @@ pub unsafe fn simd_str2int_sve2(c: &[u8], need: usize) -> (u64, usize) {
             "whilelo p0.b, xzr, {need}",
             "ptrue p2.b, vl16",
 
+            // 【优化1：内存加载前置 (Preload)】
+            // 在产生分支和计算 count 的同时，提前发出内存加载请求！
+            // 利用乱序执行掩盖 Load 延迟，当到达 1: 或 2: 时，权重已在寄存器中准备就绪。
+            "ld1h {{z3.h}}, p2/z, [{w8_ptr}]",
+            "ld1d {{z5.d}}, p2/z, [{w2_ptr}]",
+
             "ld1b {{z0.b}}, p0/z, [{ptr}]",
             "ld1b {{z1.b}}, p2/z, [{digits_ptr}]",
             "match p1.b, p0/z, z0.b, z1.b",
@@ -30,7 +36,9 @@ pub unsafe fn simd_str2int_sve2(c: &[u8], need: usize) -> (u64, usize) {
             "cmp {count}, #8",
             "b.hi 2f",
 
-            // <= 8
+            // ==========================================
+            // 标签 1: <= 8 位逻辑
+            // ==========================================
             "1:",
             "uunpklo z2.h, z0.b",
             "mov {shift}, #8",
@@ -38,40 +46,51 @@ pub unsafe fn simd_str2int_sve2(c: &[u8], need: usize) -> (u64, usize) {
             "whilelo p3.h, xzr, {shift}",
             "splice z7.h, p3, z7.h, z2.h",
 
-            "ld1h {{z3.h}}, p2/z, [{w8_ptr}]",
             "dup z4.d, #0",
             "sdot z4.d, z3.h, z7.h",
-
-            "ld1d {{z5.d}}, p2/z, [{w2_ptr}]",
             "mul z4.d, p2/m, z4.d, z5.d",
-            "uaddv d6, p2, z4.d",
-            "fmov {res}, d6",
+
+            // 【优化2：用 NEON 的 addp 替换 SVE 的 uaddv】
+            // uaddv 归约长延迟(4-6周期)，由于我们确信数据在 128-bit 内
+            // 直接借用 NEON 的 addp (2周期) 对 v4 寄存器相邻的两个 64 位进行相加！
+            "addp v4.2d, v4.2d, v4.2d",
+            "fmov {res}, d4",
             "b 3f",
 
-            // 9-16
+            // ==========================================
+            // 标签 2: > 8 位逻辑 (9-16位)
+            // ==========================================
             "2:",
             "mov {shift}, #16",
             "sub {shift}, {shift}, {count}",
             "whilelo p3.b, xzr, {shift}",
             "splice z7.b, p3, z7.b, z0.b",
 
-            "ld1h {{z3.h}}, p2/z, [{w8_ptr}]",
-            "ld1d {{z5.d}}, p2/z, [{w2_ptr}]",
-
+            // 【优化3：指令级并行 (ILP) 打断依赖链】
+            // 并行执行高位和低位的解包，打破之前的串行瓶颈
             "uunpklo z2.h, z7.b",
-            "dup z4.d, #0",
-            "sdot z4.d, z3.h, z2.h",
-            "mul z4.d, p2/m, z4.d, z5.d",
-            "uaddv d6, p2, z4.d",
-            "fmov {tmp}, d6",
+            "uunpkhi z6.h, z7.b",
 
-            "uunpkhi z2.h, z7.b",
             "dup z4.d, #0",
-            "sdot z4.d, z3.h, z2.h",
-            "mul z4.d, p2/m, z4.d, z5.d",
-            "uaddv d6, p2, z4.d",
-            "fmov {res}, d6",
+            // 借用已经用完的 z1 寄存器 (digits_ptr 的数据在 match 后已无用) 作为低位累加器
+            "dup z1.d, #0",
 
+            // 双发 sdot，CPU 乱序引擎会并行执行这两条指令
+            "sdot z4.d, z3.h, z2.h",
+            "sdot z1.d, z3.h, z6.h",
+
+            // 双发 mul
+            "mul z4.d, p2/m, z4.d, z5.d",
+            "mul z1.d, p2/m, z1.d, z5.d",
+
+            // 【优化4：双发 NEON 快速归约】
+            "addp v4.2d, v4.2d, v4.2d",
+            "addp v1.2d, v1.2d, v1.2d",
+
+            "fmov {tmp}, d4",
+            "fmov {res}, d1",
+
+            // 合并标量
             "madd {res}, {tmp}, {pow8}, {res}",
 
             "3:",

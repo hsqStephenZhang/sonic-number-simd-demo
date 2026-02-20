@@ -9,88 +9,90 @@ pub unsafe fn simd_str2int_sve2(c: &[u8], need: usize) -> (u64, usize) {
     let mut count: u64;
     let mut res: u64;
 
-    core::arch::asm!(
-        "whilelo p0.b, xzr, {need}",
-        "ptrue p2.b, vl16",
+    unsafe {
+        core::arch::asm!(
+            "whilelo p0.b, xzr, {need}",
+            "ptrue p2.b, vl16",
 
-        "ld1b {{z0.b}}, p0/z, [{ptr}]",
-        "ld1b {{z1.b}}, p2/z, [{digits_ptr}]",
-        "match p1.b, p0/z, z0.b, z1.b",
-        "not p1.b, p0/z, p1.b",
-        "brkb p1.b, p0/z, p1.b",
-        "cntp {count}, p0, p1.b",
+            "ld1b {{z0.b}}, p0/z, [{ptr}]",
+            "ld1b {{z1.b}}, p2/z, [{digits_ptr}]",
+            "match p1.b, p0/z, z0.b, z1.b",
+            "not p1.b, p0/z, p1.b",
+            "brkb p1.b, p0/z, p1.b",
+            "cntp {count}, p0, p1.b",
 
-        "sub z0.b, z0.b, #48",
-        "dup z7.b, #0",
+            "sub z0.b, z0.b, #48",
+            "dup z7.b, #0",
 
-        "cmp {count}, #8",
-        "b.hi 2f",
+            "cmp {count}, #8",
+            "b.hi 2f",
 
-        // <= 8 位逻辑
-        "1:",
-        "uunpklo z2.h, z0.b",
-        "mov {shift}, #8",
-        "sub {shift}, {shift}, {count}",
-        "whilelo p3.h, xzr, {shift}",
-        "splice z7.h, p3, z7.h, z2.h",
+            // <= 8 位逻辑
+            "1:",
+            "uunpklo z2.h, z0.b",
+            "mov {shift}, #8",
+            "sub {shift}, {shift}, {count}",
+            "whilelo p3.h, xzr, {shift}",
+            "splice z7.h, p3, z7.h, z2.h",
+
+            "ld1h {{z3.h}}, p2/z, [{w8_ptr}]",
+            "dup z4.d, #0",
+            "sdot z4.d, z3.h, z7.h",
+
+            "ld1d {{z5.d}}, p2/z, [{w2_ptr}]",
+            "mul z4.d, p2/m, z4.d, z5.d",
+            "uaddv d6, p2, z4.d",
+            "fmov {res}, d6",
+            "b 3f",
+
+            // > 8 位逻辑 (9-16位)
+            "2:",
+            "mov {shift}, #16",
+            "sub {shift}, {shift}, {count}",
+            "whilelo p3.b, xzr, {shift}",
+            "splice z7.b, p3, z7.b, z0.b",
 
         "ld1h {{z3.h}}, p2/z, [{w8_ptr}]",
-        "dup z4.d, #0",
-        "sdot z4.d, z3.h, z7.h",
-
-        "ld1d {{z5.d}}, p2/z, [{w2_ptr}]",
-        "mul z4.d, p2/m, z4.d, z5.d",
-        "uaddv d6, p2, z4.d",
-        "fmov {res}, d6",
-        "b 3f",
-
-        // > 8 位逻辑 (9-16位)
-        "2:",
-        "mov {shift}, #16",
-        "sub {shift}, {shift}, {count}",
-        "whilelo p3.b, xzr, {shift}",    
-        "splice z7.b, p3, z7.b, z0.b",
-
-        "ld1h {{z3.h}}, p2/z, [{w8_ptr}]",
         "ld1d {{z5.d}}, p2/z, [{w2_ptr}]",
 
-        "uunpklo z2.h, z7.b",
-        "dup z4.d, #0",
-        "sdot z4.d, z3.h, z2.h",
-        "mul z4.d, p2/m, z4.d, z5.d",
-        "uaddv d6, p2, z4.d",
-        "fmov {tmp}, d6",
+            "uunpklo z2.h, z7.b",
+            "dup z4.d, #0",
+            "sdot z4.d, z3.h, z2.h",
+            "mul z4.d, p2/m, z4.d, z5.d",
+            "uaddv d6, p2, z4.d",
+            "fmov {tmp}, d6",
 
-        "uunpkhi z2.h, z7.b",
-        "dup z4.d, #0",
-        "sdot z4.d, z3.h, z2.h",
-        "mul z4.d, p2/m, z4.d, z5.d",
-        "uaddv d6, p2, z4.d",
-        "fmov {res}, d6",
+            "uunpkhi z2.h, z7.b",
+            "dup z4.d, #0",
+            "sdot z4.d, z3.h, z2.h",
+            "mul z4.d, p2/m, z4.d, z5.d",
+            "uaddv d6, p2, z4.d",
+            "fmov {res}, d6",
 
-        "madd {res}, {tmp}, {pow8}, {res}",
+            "madd {res}, {tmp}, {pow8}, {res}",
 
-        "3:",
+            "3:",
 
-        ptr = in(reg) c.as_ptr(),
-        digits_ptr = in(reg) LDIGITS.as_ptr(),
-        w8_ptr = in(reg) D8D.as_ptr(),
-        w2_ptr = in(reg) D2D.as_ptr(),
-        need = in(reg) need,
-        pow8 = in(reg) 100_000_000_u64,
-        count = out(reg) count,
-        res = out(reg) res,
-        shift = out(reg) _,
-        tmp = out(reg) _,
-        out("z0") _, out("z1") _, out("z2") _, out("z3") _,
-        out("z4") _, out("z5") _, out("z6") _, out("z7") _,
-        out("p0") _, out("p1") _, out("p2") _, out("p3") _,
-        
-        // 核心优化 2：赋予 LLVM 最高级别的优化权限！
-        options(pure, readonly, nostack)
-    );
-    
-    (res, count as usize)
+            ptr = in(reg) c.as_ptr(),
+            digits_ptr = in(reg) LDIGITS.as_ptr(),
+            w8_ptr = in(reg) D8D.as_ptr(),
+            w2_ptr = in(reg) D2D.as_ptr(),
+            need = in(reg) need,
+            pow8 = in(reg) 100_000_000_u64,
+            count = out(reg) count,
+            res = out(reg) res,
+            shift = out(reg) _,
+            tmp = out(reg) _,
+            out("z0") _, out("z1") _, out("z2") _, out("z3") _,
+            out("z4") _, out("z5") _, out("z6") _, out("z7") _,
+            out("p0") _, out("p1") _, out("p2") _, out("p3") _,
+
+            // 核心优化 2：赋予 LLVM 最高级别的优化权限！
+            options(pure, readonly, nostack)
+        );
+
+        (res, count as usize)
+    }
 }
 
 #[cfg(all(target_arch = "aarch64", target_feature = "sve2"))]

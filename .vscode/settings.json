@@ -1,0 +1,6 @@
+{
+    "rust-analyzer.cargo.target": "aarch64-unknown-linux-gnu",
+    "rust-analyzer.cargo.extraEnv": {
+        "RUSTFLAGS": "-C target-feature=+sve2"
+    }
+}

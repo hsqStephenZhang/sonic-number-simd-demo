@@ -1,0 +1,3 @@
+[target.aarch64-unknown-linux-gnu]
+runner = "qemu-aarch64 -L /usr/aarch64-linux-gnu -cpu max,pmu=off,sve=on,sve128=on"
+linker = "aarch64-linux-gnu-gcc"
